@@ -1,67 +1,223 @@
-import requests
-import os
-import urllib.request
-from collections import defaultdict
-
-# 检查目录是否存在,如果不存在则创建
-if not os.path.exists('./IPTV/'):
-    os.makedirs('./IPTV/')
-
-# 文件 URL
-url = "https://A.com/IPTV/main/IPTV.m3u"
-
-# 下载 IPTV.m3u 文件
-file_path = "./IPTV/IPTV.m3u"
-urllib.request.urlretrieve(url, file_path)
-print("m3u 文件下载完成")
-
-# 发送请求获取文件内容
-response = requests.get(url)
-m3u_content = response.text
-
-# 初始化字典
-channels_dict = defaultdict(list)
-
-# 提取频道信息
-channels = []
-group_title = ""
-for i, line in enumerate(m3u_content.splitlines()):
-    line = line.strip()
-    if line.startswith("#EXTINF:"):
-        # 从 #EXTINF: 行提取频道名称和分组信息
-        channel_info = line.split(",")
-        channel_name = channel_info[1].split(" ")[0] if len(channel_info) > 1 else ""  # 仅提取频道名称
-        group_title = [item.split("group-title=")[1].split('"')[1] for item in channel_info if "group-title=" in item]
-        group_title = group_title[0] if group_title else group_title
-    elif line.startswith("http"):
-        # 处理流媒体 URL 行
-        streaming_url = line
-        channels.append({"channel_name": channel_name, "group_title": group_title, "streaming_url": streaming_url, "line_index": i})
-
-# 按照分组对频道进行分组
-grouped_channels = defaultdict(list)
-for channel in channels:
-    grouped_channels[channel["group_title"]].append(channel)
-
-# 按照行号对每个分组内部的频道进行排序
-sorted_channels = []
-for group_title, channels_in_group in grouped_channels.items():
-    sorted_channels.extend(sorted(channels_in_group, key=lambda x: x["line_index"]))
-
-# 输出到文件
-output_file_path = "./IPTV/IPTV-tvbox.txt"
-with open(output_file_path, "w", encoding="utf-8") as output_file:
-    prev_group_title = None
-    for channel in sorted_channels:
-        group_title = channel["group_title"]
-        channel_name = channel["channel_name"]
-        streaming_url = channel["streaming_url"]
-        if group_title != prev_group_title:
-            if prev_group_title:
-                output_file.write("\n")  # 在每个分组后添加一个空行
-            if group_title:
-                output_file.write(f"{group_title},#genre#\n")
-            prev_group_title = group_title
-        output_file.write(f"{channel_name},{streaming_url}\n")
-
-print(f"提取完成,结果已保存到 {output_file_path}")
+<?php 
+// 处理文件上传和格式转换 
+if ($_SERVER['REQUEST_METHOD'] === 'POST') { 
+    header('Content-Type: application/json'); 
+ 
+    // 处理文件上传 
+    if (!empty($_FILES['file']['tmp_name'])) { 
+        $content = file_get_contents($_FILES['file']['tmp_name']); 
+        if ($content === false) { 
+            echo json_encode(['error' => '无法读取上传的文件']); 
+            exit; 
+        } 
+        echo json_encode(['uploaded' => $content]); 
+        exit; 
+    } 
+ 
+    // 处理格式转换 
+    $input = $_POST['input']?? ''; 
+    $output = convertFormat($input); 
+    echo json_encode(['output' => trim($output)]); 
+    exit; 
+} 
+ 
+// 格式转换函数 
+function convertFormat($input) { 
+    if (strpos($input, '#EXTM3U')!== false) { 
+        // M3U转TXT 
+        return m3uToTxt($input); 
+    } else { 
+        // TXT转M3U 
+        return txtToM3u($input); 
+    } 
+} 
+ 
+// M3U转TXT函数 
+function m3uToTxt($input) { 
+    $output = ''; 
+    $channel = ''; 
+    $lines = explode("\n", $input); 
+    foreach ($lines as $line) { 
+        // 忽略含有特定字符串的行 
+        if (strpos($line, '#genre#')!== false || strpos($line, '//0/0.m3u8')!== false) { 
+            continue; 
+        } 
+        if (strpos($line, '#EXTINF') === 0) { 
+            $channelParts = explode(',', $line, 2); 
+            $channel = $channelParts[1]?? ''; 
+            continue; 
+        } 
+        if (!empty(trim($line)) && $line[0]!== '#') { 
+            $output.= "$channel,". trim($line). "\r\n"; 
+            $channel = ''; 
+        } 
+    } 
+    return $output; 
+} 
+ 
+// TXT转M3U函数 
+function txtToM3u($input) { 
+    $output = "#EXTM3U\r\n"; 
+    $lines = explode("\n", $input); 
+    foreach ($lines as $line) { 
+        // 忽略含有特定字符串的行 
+        if (strpos($line, '#genre#')!== false || strpos($line, '//0/0.m3u8')!== false) { 
+            continue; 
+        } 
+        $parts = explode(',', trim($line), 2); 
+        if (count($parts) === 2) { 
+            $output.= "#EXTINF:-1,$parts[0]\r\n$parts[1]\r\n"; 
+        } elseif (!empty(trim($line))) { 
+            $output.= trim($line). "\r\n"; 
+        } 
+    } 
+    return $output; 
+} 
+?> 
+<!DOCTYPE html> 
+<html lang="zh-CN"> 
+<head> 
+    <meta charset="UTF-8"> 
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"> 
+    <title>直播源格式转换器</title> 
+    <link href="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.1.3/css/bootstrap.min.css"  rel="stylesheet"> 
+    <style> 
+       .container { max-width: 800px; margin-top: 2rem; } 
+       .textarea-container { margin: 1rem 0; position: relative; } 
+        textarea { height: 300px; resize: vertical; } 
+       .button-group { gap: 0.5rem; margin-top: 1rem; display: flex; justify-content: center; } 
+       .custom-file-input::-webkit-file-upload-button { visibility: hidden; } 
+       .custom-file-input::before { 
+            content: '选择文件'; 
+            display: inline-block; 
+            background: #0d6efd; 
+            color: white; 
+            padding: 0.375rem 0.75rem; 
+            border-radius: 0.25rem; 
+            cursor: pointer; 
+       } 
+		/* 新增标题样式 */
+		.enhanced-title {
+			font-family: '微软雅黑', sans-serif;
+			text-shadow: 2px 2px 3px rgba(0,0,0,0.1);
+			letter-spacing: 1.5px;
+			background: linear-gradient(45deg, #2c3e50, #3498db);
+			-webkit-background-clip: text;
+			background-clip: text;
+			-webkit-text-fill-color: transparent;
+			padding-bottom: 0.5rem;
+			border-bottom: 3px solid #3498db;
+		}
+    </style> 
+</head> 
+<body> 
+    <div class="container"> 
+        <h2 class="text-center mb-4 enhanced-title">📡 直播源格式转换器 | M3U↔TXT智能互转</h2> 
+        <form id="converterForm" onsubmit="return false;"> 
+            <div class="input-group"> 
+                <input type="file" class="form-control custom-file-input" id="fileInput" accept=".m3u,.txt"> 
+            </div> 
+            <div class="textarea-container"> 
+                <label class="form-label">输入内容：</label> 
+                <textarea class="form-control" id="inputArea" placeholder="粘贴内容或上传文件...（提供M3U则转换成TXT，反之，提供TXT则转换成M3U。）"></textarea> 
+            </div> 
+            <div class="button-group"> 
+                <button class="btn btn-primary" onclick="convert()">转换格式</button> 
+                <button type="button" class="btn btn-danger" onclick="resetForm()">重置数据</button> 
+            </div> 
+            <div class="textarea-container"> 
+                <label class="form-label">转换结果：</label> 
+                <textarea class="form-control" id="outputArea" readonly></textarea> 
+                <!-- 修改这里的类，将按钮水平居中 --> 
+                <div class="mt-2 d-flex justify-content-center gap-2"> 
+                    <button class="btn btn-success" onclick="copyResult()">复制结果</button> 
+                    <button class="btn btn-info" onclick="downloadResult()">下载文件</button> 
+                </div> 
+            </div> 
+        </form> 
+    </div> 
+    <script> 
+        // 文件上传处理 
+        document.getElementById('fileInput').addEventListener('change',  function(e) { 
+            const file = e.target.files[0];  
+ 
+            if (!file) return; 
+ 
+            const formData = new FormData(); 
+            formData.append('file',  file); 
+ 
+            fetch('', { 
+                method: 'POST', 
+                body: formData 
+            }) 
+          .then(response => response.json())  
+          .then(data => { 
+                if (data.error)  { 
+                    alert(data.error);  
+                } else { 
+                    document.getElementById('inputArea').value  = data.uploaded;  
+                } 
+                e.target.value  = ''; // 清空文件选择 
+            }) 
+          .catch(error => { 
+                alert('文件上传出错：' + error.message);  
+            }); 
+        }); 
+ 
+        // 格式转换函数 
+        function convert() { 
+            const input = document.getElementById('inputArea').value;  
+ 
+            if (!input.trim())  return alert('请输入内容或上传文件'); 
+ 
+            fetch('', { 
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, 
+                body: `input=${encodeURIComponent(input)}` 
+            }) 
+          .then(response => response.json())  
+          .then(data => { 
+                if (data.error)  { 
+                    alert(data.error);  
+                } else { 
+                    document.getElementById('outputArea').value  = data.output;  
+                } 
+            }) 
+          .catch(error => { 
+                alert('格式转换出错：' + error.message);  
+            }); 
+        } 
+ 
+        // 结果处理函数 
+        function copyResult() { 
+            const outputArea = document.getElementById('outputArea');  
+ 
+            outputArea.select();  
+            document.execCommand('copy');  
+            alert('复制成功！'); 
+        } 
+ 
+        function downloadResult() { 
+            const content = document.getElementById('outputArea').value;  
+ 
+            // 设置字符编码为UTF-8，确保下载文件不会乱码 
+            const blob = new Blob([content], {type: 'text/plain;charset=utf-8'}); 
+            const url = URL.createObjectURL(blob);  
+ 
+            const a = document.createElement('a');  
+            a.href  = url; 
+            a.download  = `live_source_${new Date().toISOString().slice(0,10)}.${content.includes('#EXTM3U')?  'm3u' : 'txt'}`; 
+            a.click();  
+ 
+            URL.revokeObjectURL(url);  
+        } 
+ 
+        // 重置表单 
+        function resetForm() { 
+            document.getElementById('converterForm').reset();  
+            document.getElementById('inputArea').value  = ''; 
+            document.getElementById('outputArea').value  = ''; 
+        } 
+    </script> 
+</body> 
+</html> 
